@@ -4594,8 +4594,8 @@ static void *s3_virge_375_init() {
 
 static void s3_virge_close(void *p) {
         virge_t *virge = (virge_t *)p;
-        int perf_snapshot_taken = 0;
 #ifdef PCEM_PERF_STATS
+        int perf_snapshot_taken = 0;
         virge_perf_dump_t perf_snapshot;
 #endif
 #ifndef RELEASE_BUILD
