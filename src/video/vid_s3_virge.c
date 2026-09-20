@@ -4420,7 +4420,7 @@ static void *s3_virge_375_init() {
 static void s3_virge_close(void *p) {
         virge_t *virge = (virge_t *)p;
 #ifdef PCEM_PERF_STATS
-        virge_perf_stats_t perf_snapshot = virge->perf;
+        virge_perf_stats_t perf_snapshot;
 #endif
 #ifndef RELEASE_BUILD
         FILE *f = fopen("vram.dmp", "wb");
@@ -4428,8 +4428,8 @@ static void s3_virge_close(void *p) {
         fclose(f);
 #endif
 
-        thread_kill(virge->render_thread);
-        thread_kill(virge->fifo_thread);
+        thread_kill_join(virge->render_thread);
+        thread_kill_join(virge->fifo_thread);
         thread_destroy_event(virge->not_full_event);
         thread_destroy_event(virge->wake_main_thread);
         thread_destroy_event(virge->wake_render_thread);

@@ -17,7 +17,7 @@ thread_t *thread_create(void (*thread_rout)(void *param), void *param) {
         return thread;
 }
 
-void thread_kill(thread_t *handle) {
+void thread_kill_join(thread_t *handle) {
         pthread_t *thread = (pthread_t *)handle;
 
         pthread_cancel(*thread);
@@ -25,6 +25,8 @@ void thread_kill(thread_t *handle) {
 
         free(thread);
 }
+
+void thread_kill(thread_t *handle) { thread_kill_join(handle); }
 
 event_t *thread_create_event() {
         event_pthread_t *event = malloc(sizeof(event_pthread_t));
