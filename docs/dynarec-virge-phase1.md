@@ -1,76 +1,76 @@
-# Phase 1: dynarec 386 / S3 ViRGE
+# Phase 1: 386 dynarec / S3 ViRGE
 
-Esta entrega mantiene la semántica existente y se limita a instrumentación opcional, desactivada por defecto.
+This change keeps existing emulation semantics intact and limits Phase 1 to optional instrumentation that is disabled by default.
 
-## Arquitectura revisada
+## Reviewed architecture
 
 - `src/cpu/386_dynarec.c`
-  - `exec_interpreter()` ejecuta bloques completos por `x86_opcodes[...]` y corta por cambio de página, `abrt`, `trap`, SMI/NMI o fin de bloque.
-  - `exec_recompiler()` hace validación rápida por `codeblock_hash`, valida `pc/_cs/phys/status`, cae a búsqueda lenta `codeblock_tree_find()` cuando falla, comprueba `dirty_mask/page_mask`, y recompila o marca bloques según el estado.
-  - Durante recompilación, cada instrucción sigue pasando por el handler clásico `x86_opcodes[...]` después de `codegen_generate_call(...)`.
+  - `exec_interpreter()` runs whole blocks through `x86_opcodes[...]` and exits on page changes, `abrt`, `trap`, SMI/NMI, or explicit block-end conditions.
+  - `exec_recompiler()` does a fast `codeblock_hash` lookup, validates `pc/_cs/phys/status`, falls back to `codeblock_tree_find()` on misses, checks `dirty_mask/page_mask`, and then either recompiles, executes, or marks blocks.
+  - During recompilation, every instruction still passes through the classic handler path `x86_opcodes[...]` after `codegen_generate_call(...)`.
 - `includes/private/codegen/codegen.h`
-  - `codeblock_t` conserva `pc`, `phys`, `status`, `flags`, máscaras por página (`page_mask`, `page_mask2`) y punteros a `dirty_mask`, además de listas por página y árbol de búsqueda.
+  - `codeblock_t` carries `pc`, `phys`, `status`, `flags`, per-page masks (`page_mask`, `page_mask2`), dirty-mask pointers, and both per-page list links and tree links.
 - `src/codegen/codegen_block.c`
-  - `codegen_check_flush()` invalida bloques cuando `dirty_mask & page_mask` intersectan.
-  - `codegen_block_init()`, `codegen_block_start_recompile()`, `codegen_block_end()` y `codegen_block_end_recompile()` son los puntos seguros para medir creación/finalización de bloques.
-- `src/codegen/codegen.c` y `src/codegen/codegen_x86-64.c`
-  - `codegen_generate_call()` decide entre traductor nativo (`recomp_op_table[...]`) y fallback a handler C (`uop_CALL_INSTRUCTION_FUNC` o equivalente x86-64).
+  - `codegen_check_flush()` invalidates blocks when `dirty_mask & page_mask` intersects.
+  - `codegen_block_init()`, `codegen_block_start_recompile()`, `codegen_block_end()`, and `codegen_block_end_recompile()` are the safe lifecycle points for instrumentation.
+- `src/codegen/codegen.c` and `src/codegen/codegen_x86-64.c`
+  - `codegen_generate_call()` decides between a native dynarec translator (`recomp_op_table[...]`) and a fallback C handler call.
 - `src/cpu/cpu.c`
-  - `x86_setopcodes()` conecta tablas `x86_opcodes` y `x86_dynarec_opcodes`.
+  - `x86_setopcodes()` wires together `x86_opcodes` and `x86_dynarec_opcodes`.
 - `src/video/vid_s3_virge.c`
-  - `s3_virge_bitblt()` concentra BitBLT, rectfill, line y poly.
-  - `MIX()` aplica el ROP bit a bit.
-  - `tri()` y `s3_virge_triangle()` llevan la rasterización 3D, acceso a VRAM y muestreo de texturas.
+  - `s3_virge_bitblt()` contains BitBLT, rectfill, line, and poly dispatch.
+  - `MIX()` applies the ROP bit-by-bit.
+  - `tri()` and `s3_virge_triangle()` drive 3D rasterization, VRAM accesses, and texture sampling.
 
-## Cuellos de botella y riesgos de compatibilidad
+## Bottlenecks and compatibility risks
 
-- El dynarec actual no puede asumirse “mayoritariamente nativo”: la decisión real entre traductor nativo y handler C ocurre dentro de `codegen_generate_call()` y depende de la tabla/opcode concretos.
-- La validación de bloques depende de:
-  - `pc/_cs/phys/status` actuales;
-  - máscaras por página y páginas sucias;
-  - recompilación por `TOP` estático de FPU.
-  Por eso no se forzó todavía una caché de “último bloque” sin medir antes estos casos.
-- La invalidación de código está acoplada a `mem_flush_write_page()`, `dirty_mask`, `code_present_mask` y a listas/árboles de `codeblock_t`; un atajo incorrecto puede romper self-modifying code.
-- En ViRGE, BitBLT y triángulos mezclan clipping, direcciones invertidas, varios formatos y accesos directos a VRAM; optimizar `MIX()` o copiar memoria sin especialización explícita sería arriesgado.
+- The current dynarec cannot be assumed to be “mostly native”: the real native-vs-C split only happens inside `codegen_generate_call()` and depends on the exact opcode/table combination.
+- Block validation depends on:
+  - current `pc/_cs/phys/status`;
+  - page dirtiness and per-page masks;
+  - recompilation on static FPU `TOP` mismatches.
+  Because of that, this phase does **not** force a last-block cache or similar shortcut without first measuring those cases.
+- Code invalidation is tightly coupled to `mem_flush_write_page()`, `dirty_mask`, `code_present_mask`, and the `codeblock_t` list/tree structures; an unsafe fast path here would risk breaking self-modifying code.
+- In ViRGE, BitBLT and triangle paths mix clipping, copy direction, pixel-format handling, and direct VRAM traffic. Optimizing `MIX()` or bulk-copy behavior without specialization would be risky.
 
-## Instrumentación añadida
+## Added instrumentation
 
-Compilar con:
+Build with:
 
 ```sh
 cmake -S . -B build -DPCEM_PERF_STATS=ON
 cmake --build build -j
 ```
 
-Con `PCEM_PERF_STATS=ON`, al cerrar el emulador se vuelcan a `pclog`:
+When `PCEM_PERF_STATS=ON`, shutdown logging now dumps:
 
-- Dynarec 386:
-  - bloques interpretados;
-  - entradas al recompiler;
-  - validaciones rápidas correctas;
-  - fallos de caché hash;
-  - validaciones lentas y aciertos;
-  - comprobaciones por páginas sucias;
-  - recompilaciones por `TOP` de FPU;
-  - bloques compilados, ejecutados y solo marcados;
-  - invalidaciones;
-  - excepciones;
-  - instrucciones traducidas nativamente frente a fallbacks a handler C.
+- 386 dynarec:
+  - interpreted blocks;
+  - recompiler entries;
+  - successful fast validations;
+  - hash-cache misses;
+  - slow validations and slow hits;
+  - dirty-page checks;
+  - FPU `TOP` recompiles;
+  - compiled, executed, and mark-only blocks;
+  - block invalidations;
+  - exception handling events;
+  - native translation decisions vs fallback handler calls.
 - S3 ViRGE:
-  - operaciones y píxeles de BitBLT;
-  - operaciones y píxeles de rectfill;
-  - operaciones line/poly;
-  - triángulos, píxeles rasterizados y muestras de textura;
-  - lecturas/escrituras de VRAM observadas en estas rutas;
-  - operaciones escalares;
-  - tiempo acumulado en ticks;
-  - histograma de ROP usado.
+  - BitBLT operations and pixels;
+  - rectfill operations and pixels;
+  - line/poly operations;
+  - triangles, rasterized pixels, and texture samples;
+  - VRAM reads/writes observed on these paths;
+  - scalar operation count;
+  - accumulated CPU-time ticks;
+  - per-ROP usage histogram.
 
-## Benchmarks base
+## Baseline benchmark procedure
 
-No hay infraestructura de benchmark automatizada en este árbol ni ROMs/fixtures portables incluidos para ejecutar una línea base completa en el entorno del agente.
+There is no automated benchmark or test harness in this tree, and no portable ROM/workload fixtures are bundled, so a complete benchmark run could not be executed in the agent environment.
 
-Comandos reproducibles propuestos (no ejecutados aquí):
+Reproducible commands prepared for contributors (not executed here):
 
 ```sh
 cmake -S . -B build-rel -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPCEM_PERF_STATS=ON
@@ -78,18 +78,18 @@ cmake --build build-rel -j
 ./build-rel/src/pcem
 ```
 
-Procedimiento manual sugerido (no ejecutado aquí):
+Manual baseline procedure (not executed here):
 
-1. Abrir una máquina 386 con dynarec activado y una máquina con S3 ViRGE.
-2. Ejecutar la misma carga DOS/Windows 9x/juego durante una ventana fija.
-3. Cerrar PCem y recoger el `pclog`.
-4. Comparar:
+1. Open the same 386 machine with dynarec enabled, and the same S3 ViRGE configuration.
+2. Run the same DOS/Windows 9x/game workload for a fixed window.
+3. Close PCem and collect the `pclog`.
+4. Compare:
    - `native_translated_instructions` vs `handler_calls`;
    - `cache_misses`, `slow_validations`, `block_invalidations`;
    - `bitblt_pixels`, `triangles`, `rasterized_pixels`, `rop[...]`.
 
-## Limitaciones actuales
+## Current limitations
 
-- No se añadió una optimización de caché de bloques ni AVX2 en esta fase porque la semántica de invalidación y las pruebas disponibles no permiten demostrar equivalencia exacta en este entorno.
-- El porcentaje de handlers C solo es medible cuando `PCEM_PERF_STATS=ON` y se recompilan bloques durante una ejecución real.
-- No se afirman mejoras de rendimiento en este documento.
+- This phase does **not** add a block-cache optimization, AVX2 path, or semantic changes, because the current repository and available tests do not let us prove equivalence safely in this environment.
+- The proportion of C handlers is only measurable when `PCEM_PERF_STATS=ON` and real workloads actually trigger block recompilation.
+- No performance improvement is claimed in this document.

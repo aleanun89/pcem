@@ -104,6 +104,28 @@ typedef struct s3d_t {
         int ty01, ty12, tlr;
 } s3d_t;
 
+typedef struct virge_perf_stats_t {
+#ifdef PCEM_PERF_STATS
+        uint64_t bitblt_ops;
+        uint64_t bitblt_pixels;
+        uint64_t rectfill_ops;
+        uint64_t rectfill_pixels;
+        uint64_t line_ops;
+        uint64_t poly_ops;
+        uint64_t triangles;
+        uint64_t rasterized_pixels;
+        uint64_t texture_samples;
+        uint64_t vram_reads;
+        uint64_t vram_writes;
+        uint64_t scalar_ops;
+        uint64_t avx2_ops;
+        uint64_t cpu_time;
+        uint64_t rop_usage[256];
+#else
+        int unused;
+#endif
+} virge_perf_stats_t;
+
 typedef struct virge_t {
         mem_mapping_t linear_mapping;
         mem_mapping_t mmio_mapping;
@@ -231,49 +253,31 @@ typedef struct virge_t {
         uint8_t subsys_stat, subsys_cntl;
 
         uint8_t serialport;
-#ifdef PCEM_PERF_STATS
-        struct {
-                uint64_t bitblt_ops;
-                uint64_t bitblt_pixels;
-                uint64_t rectfill_ops;
-                uint64_t rectfill_pixels;
-                uint64_t line_ops;
-                uint64_t poly_ops;
-                uint64_t triangles;
-                uint64_t rasterized_pixels;
-                uint64_t texture_samples;
-                uint64_t vram_reads;
-                uint64_t vram_writes;
-                uint64_t scalar_ops;
-                uint64_t avx2_ops;
-                uint64_t cpu_time;
-                uint64_t rop_usage[256];
-        } perf;
-#endif
+        virge_perf_stats_t perf;
 } virge_t;
 
 #ifdef PCEM_PERF_STATS
-static void s3_virge_perf_dump(virge_t *virge) {
+static void s3_virge_perf_dump(const virge_perf_stats_t *perf) {
         int rop;
 
         pclog("s3-virge stats:\n");
         pclog("  bitblt_ops=%llu bitblt_pixels=%llu rectfill_ops=%llu rectfill_pixels=%llu line_ops=%llu poly_ops=%llu triangles=%llu rasterized_pixels=%llu texture_samples=%llu\n",
-              (unsigned long long)virge->perf.bitblt_ops, (unsigned long long)virge->perf.bitblt_pixels,
-              (unsigned long long)virge->perf.rectfill_ops, (unsigned long long)virge->perf.rectfill_pixels,
-              (unsigned long long)virge->perf.line_ops, (unsigned long long)virge->perf.poly_ops,
-              (unsigned long long)virge->perf.triangles, (unsigned long long)virge->perf.rasterized_pixels,
-              (unsigned long long)virge->perf.texture_samples);
+              (unsigned long long)perf->bitblt_ops, (unsigned long long)perf->bitblt_pixels,
+              (unsigned long long)perf->rectfill_ops, (unsigned long long)perf->rectfill_pixels,
+              (unsigned long long)perf->line_ops, (unsigned long long)perf->poly_ops,
+              (unsigned long long)perf->triangles, (unsigned long long)perf->rasterized_pixels,
+              (unsigned long long)perf->texture_samples);
         pclog("  vram_reads=%llu vram_writes=%llu scalar_ops=%llu avx2_ops=%llu cpu_time_ticks=%llu\n",
-              (unsigned long long)virge->perf.vram_reads, (unsigned long long)virge->perf.vram_writes,
-              (unsigned long long)virge->perf.scalar_ops, (unsigned long long)virge->perf.avx2_ops,
-              (unsigned long long)virge->perf.cpu_time);
+              (unsigned long long)perf->vram_reads, (unsigned long long)perf->vram_writes,
+              (unsigned long long)perf->scalar_ops, (unsigned long long)perf->avx2_ops,
+              (unsigned long long)perf->cpu_time);
         for (rop = 0; rop < 256; rop++) {
-                if (virge->perf.rop_usage[rop])
-                        pclog("  rop[0x%02x]=%llu\n", rop, (unsigned long long)virge->perf.rop_usage[rop]);
+                if (perf->rop_usage[rop])
+                        pclog("  rop[0x%02x]=%llu\n", rop, (unsigned long long)perf->rop_usage[rop]);
         }
 }
 #else
-static void s3_virge_perf_dump(virge_t *virge) { (void)virge; }
+static void s3_virge_perf_dump(const virge_perf_stats_t *perf) { (void)perf; }
 #endif
 
 #ifdef PCEM_PERF_STATS
@@ -2390,7 +2394,8 @@ static void s3_virge_bitblt(virge_t *virge, int count, uint32_t cpu_dat) {
         case CMD_SET_COMMAND_NOP:
                 break;
 
-        case CMD_SET_COMMAND_BITBLT:
+        case CMD_SET_COMMAND_BITBLT: {
+                uint64_t bitblt_pixels = 0;
                 if (count == -1) {
                         virge->s3d.src_x = virge->s3d.rsrc_x;
                         virge->s3d.src_y = virge->s3d.rsrc_y;
@@ -2481,9 +2486,7 @@ static void s3_virge_bitblt(virge_t *virge, int count, uint32_t cpu_dat) {
 
                                 WRITE(dest_addr, out);
                         }
-#ifdef PCEM_PERF_STATS
-                        VIRGE_PERF_INC(virge, bitblt_pixels);
-#endif
+                        bitblt_pixels++;
 
                         virge->s3d.src_x += x_inc;
                         virge->s3d.src_x &= 0x7ff;
@@ -2511,15 +2514,19 @@ static void s3_virge_bitblt(virge_t *virge, int count, uint32_t cpu_dat) {
                                         break;
                                 }
                                 if (!virge->s3d.h) {
+                                        VIRGE_PERF_ADD(virge, bitblt_pixels, bitblt_pixels);
                                         return;
                                 }
                         } else
                                 virge->s3d.w--;
                 }
+                VIRGE_PERF_ADD(virge, bitblt_pixels, bitblt_pixels);
                 break;
+        }
 
-        case CMD_SET_COMMAND_RECTFILL:
+        case CMD_SET_COMMAND_RECTFILL: {
                 /*No source, pattern = pat_fg_clr*/
+                uint64_t rectfill_pixels = 0;
                 if (count == -1) {
                         virge->s3d.src_x = virge->s3d.rsrc_x;
                         virge->s3d.src_y = virge->s3d.rsrc_y;
@@ -2556,9 +2563,7 @@ static void s3_virge_bitblt(virge_t *virge, int count, uint32_t cpu_dat) {
 
                                 WRITE(dest_addr, out);
                         }
-#ifdef PCEM_PERF_STATS
-                        VIRGE_PERF_INC(virge, rectfill_pixels);
-#endif
+                        rectfill_pixels++;
 
                         virge->s3d.src_x += x_inc;
                         virge->s3d.src_x &= 0x7ff;
@@ -2573,13 +2578,16 @@ static void s3_virge_bitblt(virge_t *virge, int count, uint32_t cpu_dat) {
                                 virge->s3d.dest_y += y_inc;
                                 virge->s3d.h--;
                                 if (!virge->s3d.h) {
+                                        VIRGE_PERF_ADD(virge, rectfill_pixels, rectfill_pixels);
                                         return;
                                 }
                         } else
                                 virge->s3d.w--;
                         count--;
                 }
+                VIRGE_PERF_ADD(virge, rectfill_pixels, rectfill_pixels);
                 break;
+        }
 
         case CMD_SET_COMMAND_LINE:
                 if (count == -1) {
@@ -4377,6 +4385,7 @@ static void *s3_virge_375_init() {
 
 static void s3_virge_close(void *p) {
         virge_t *virge = (virge_t *)p;
+        virge_perf_stats_t perf_snapshot = virge->perf;
 #ifndef RELEASE_BUILD
         FILE *f = fopen("vram.dmp", "wb");
         fwrite(virge->svga.vram, 4 << 20, 1, f);
@@ -4385,7 +4394,8 @@ static void s3_virge_close(void *p) {
 
         thread_kill(virge->render_thread);
         thread_kill(virge->fifo_thread);
-        s3_virge_perf_dump(virge);
+        perf_snapshot = virge->perf;
+        s3_virge_perf_dump(&perf_snapshot);
 
         thread_destroy_event(virge->not_full_event);
         thread_destroy_event(virge->wake_main_thread);
