@@ -1038,6 +1038,7 @@ generate_call:
         if (recomp_op_table && recomp_op_table[(opcode | op_32) & 0x1ff]) {
                 uint32_t new_pc = recomp_op_table[(opcode | op_32) & 0x1ff](opcode, fetchdat, op_32, op_pc, block);
                 if (new_pc) {
+                        cpu_dynarec_perf_record_native_instruction();
                         if (new_pc != -1)
                                 STORE_IMM_ADDR_L((uintptr_t)&cpu_state.pc, new_pc);
 
@@ -1094,6 +1095,7 @@ generate_call:
                 addbyte((uint8_t)cpu_state_offset(ea_seg));
                 addlong((uint32_t)(uintptr_t)op_ea_seg);
         }
+        cpu_dynarec_perf_record_handler_call();
 
         addbyte(0xC7); /*MOVL [pc],new_pc*/
         addbyte(0x45);

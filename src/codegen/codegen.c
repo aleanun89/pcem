@@ -627,6 +627,7 @@ generate_call:
                 uint32_t new_pc =
                         recomp_op_table[(opcode | op_32) & recomp_opcode_mask](block, ir, opcode, fetchdat, op_32, op_pc);
                 if (new_pc) {
+                        cpu_dynarec_perf_record_native_instruction();
                         if (new_pc != -1)
                                 uop_MOV_IMM(ir, IREG_pc, new_pc);
 
@@ -691,6 +692,7 @@ generate_call:
         if (op_ssegs != last_op_ssegs)
                 uop_MOV_IMM(ir, IREG_ssegs, op_ssegs);
         uop_LOAD_FUNC_ARG_IMM(ir, 0, fetchdat);
+        cpu_dynarec_perf_record_handler_call();
         uop_CALL_INSTRUCTION_FUNC(ir, op);
         codegen_mark_code_present(block, cs + cpu_state.pc, 8);
 

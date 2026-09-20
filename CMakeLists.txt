@@ -49,6 +49,12 @@ message("Plugin Support: ${PLUGIN_ENGINE}")
 option(USE_NETWORKING "Build PCem with networking support" ON)
 message("Networking Support: ${USE_NETWORKING}")
 
+option(PCEM_PERF_STATS "Build PCem with optional dynarec/ViRGE performance counters" OFF)
+message("Performance Counters: ${PCEM_PERF_STATS}")
+if(PCEM_PERF_STATS)
+        set(PCEM_DEFINES ${PCEM_DEFINES} PCEM_PERF_STATS)
+endif()
+
 if(USE_NETWORKING)
 # Turning off to see if it does build with CLang, I think it passes warnings but still builds.
 #        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -std=gnu17")
