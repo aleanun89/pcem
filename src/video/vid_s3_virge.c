@@ -4456,6 +4456,7 @@ static void *s3_virge_375_init() {
 
 static void s3_virge_close(void *p) {
         virge_t *virge = (virge_t *)p;
+        int perf_snapshot_taken = 0;
 #ifdef PCEM_PERF_STATS
         virge_perf_dump_t perf_snapshot;
 #endif
@@ -4467,6 +4468,12 @@ static void s3_virge_close(void *p) {
 
         if (!s3_virge_wait_fifo_idle_bounded(virge, 2000) || !s3_virge_wait_renderer_idle_bounded(virge, 2000))
                 pclog("s3_virge_close: timed out waiting for idle, forcing shutdown\n");
+#ifdef PCEM_PERF_STATS
+        else {
+                s3_virge_perf_snapshot(virge, &perf_snapshot);
+                perf_snapshot_taken = 1;
+        }
+#endif
 
         thread_kill_join(virge->render_thread);
         thread_kill_join(virge->fifo_thread);
@@ -4478,7 +4485,8 @@ static void s3_virge_close(void *p) {
         thread_destroy_event(virge->fifo_not_full_event);
 
 #ifdef PCEM_PERF_STATS
-        s3_virge_perf_snapshot(virge, &perf_snapshot);
+        if (!perf_snapshot_taken)
+                s3_virge_perf_snapshot(virge, &perf_snapshot);
         s3_virge_perf_dump(&perf_snapshot);
 #endif
 
