@@ -96,17 +96,17 @@ Only after scalar-path equivalence and measurement:
 ### Instrumented benchmark build
 
 ```sh
-cmake -S /home/runner/work/pcem/pcem -B /home/runner/work/pcem/pcem/build-bench \
+cmake -S . -B build-bench \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DPCEM_PERF_STATS=ON
-cmake --build /home/runner/work/pcem/pcem/build-bench -j
+cmake --build build-bench -j
 ```
 
 Run:
 
 ```sh
-/home/runner/work/pcem/pcem/build-bench/src/pcem
+./build-bench/src/pcem
 ```
 
 ### Benchmark method
@@ -140,17 +140,17 @@ Pick workloads that stress the area being measured:
 For a normal production-oriented build, leave perf counters disabled:
 
 ```sh
-cmake -S /home/runner/work/pcem/pcem -B /home/runner/work/pcem/pcem/build-prod \
+cmake -S . -B build-prod \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DPCEM_PERF_STATS=OFF
-cmake --build /home/runner/work/pcem/pcem/build-prod -j
+cmake --build build-prod -j
 ```
 
 Run:
 
 ```sh
-/home/runner/work/pcem/pcem/build-prod/src/pcem
+./build-prod/src/pcem
 ```
 
 ## Production recommendations
