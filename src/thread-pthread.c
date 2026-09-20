@@ -77,3 +77,22 @@ void thread_destroy_event(event_t *handle) {
 }
 
 void thread_sleep(int t) { usleep(t * 1000); }
+
+mutex_t *thread_create_mutex(void) {
+        pthread_mutex_t *mutex = malloc(sizeof(pthread_mutex_t));
+
+        pthread_mutex_init(mutex, NULL);
+
+        return (mutex_t *)mutex;
+}
+
+void thread_lock_mutex(mutex_t *handle) { pthread_mutex_lock((pthread_mutex_t *)handle); }
+
+void thread_unlock_mutex(mutex_t *handle) { pthread_mutex_unlock((pthread_mutex_t *)handle); }
+
+void thread_destroy_mutex(mutex_t *handle) {
+        pthread_mutex_t *mutex = (pthread_mutex_t *)handle;
+
+        pthread_mutex_destroy(mutex);
+        free(mutex);
+}
