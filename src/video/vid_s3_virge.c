@@ -1,5 +1,11 @@
 /*S3 ViRGE emulation*/
 #include <stdlib.h>
+#if (defined(__x86_64__) || defined(__i386__)) && (defined(__GNUC__) || defined(__clang__))
+#include <immintrin.h>
+#define VIRGE_HAVE_AVX2_TARGET 1
+#else
+#define VIRGE_HAVE_AVX2_TARGET 0
+#endif
 #include "ibm.h"
 #include "device.h"
 #include "io.h"
@@ -144,6 +150,8 @@ typedef struct virge_perf_dump_t {
         uint64_t cpu_time;
         uint64_t rop_usage[256];
 } virge_perf_dump_t;
+#else
+typedef virge_perf_stats_t virge_perf_dump_t;
 #endif
 
 typedef struct virge_t {
@@ -319,7 +327,7 @@ static void s3_virge_perf_dump(const virge_perf_dump_t *perf) {
         }
 }
 #else
-static void s3_virge_perf_dump(const virge_perf_stats_t *perf) { (void)perf; }
+static void s3_virge_perf_dump(const virge_perf_dump_t *perf) { (void)perf; }
 #endif
 
 #ifdef PCEM_PERF_STATS
@@ -348,6 +356,134 @@ static void s3_virge_perf_dump(const virge_perf_stats_t *perf) { (void)perf; }
                 (void)(rop);                                                                                                     \
         } while (0)
 #endif
+
+static void s3_virge_mark_changed_range(svga_t *svga, uint32_t addr, uint32_t bytes) {
+        uint32_t start_page;
+        uint32_t end_page;
+        uint32_t page;
+
+        if (!bytes)
+                return;
+
+        start_page = (addr & svga->vram_mask) >> 12;
+        end_page = ((addr + bytes - 1) & svga->vram_mask) >> 12;
+
+        for (page = start_page; page <= end_page; page++)
+                svga->changedvram[page] = changeframecount;
+}
+
+#if VIRGE_HAVE_AVX2_TARGET
+static int s3_virge_host_has_avx2(void) {
+        static int avx2_available = -1;
+
+        if (avx2_available == -1) {
+                __builtin_cpu_init();
+                avx2_available = __builtin_cpu_supports("avx2") ? 1 : 0;
+        }
+
+        return avx2_available;
+}
+
+static __attribute__((target("avx2"))) void s3_virge_avx2_fill_u8(uint8_t *dst, uint8_t value, int pixels) {
+        __m256i fill = _mm256_set1_epi8((char)value);
+
+        while (pixels >= 32) {
+                _mm256_storeu_si256((__m256i *)dst, fill);
+                dst += 32;
+                pixels -= 32;
+        }
+        while (pixels--)
+                *dst++ = value;
+}
+
+static __attribute__((target("avx2"))) void s3_virge_avx2_fill_u16(uint8_t *dst, uint16_t value, int pixels) {
+        __m256i fill = _mm256_set1_epi16((short)value);
+        uint16_t *dst16 = (uint16_t *)dst;
+
+        while (pixels >= 16) {
+                _mm256_storeu_si256((__m256i *)dst16, fill);
+                dst16 += 16;
+                pixels -= 16;
+        }
+        while (pixels--)
+                *dst16++ = value;
+}
+#endif
+
+static int s3_virge_rectfill_avx2(virge_t *virge, svga_t *svga, uint8_t *vram, int bpp, int x_mul, int x_inc, int y_inc) {
+#if VIRGE_HAVE_AVX2_TARGET
+        int row;
+        int width_pixels;
+        int height_rows;
+        uint32_t row_bytes;
+        uint32_t base_addr;
+
+        if (!s3_virge_host_has_avx2())
+                return 0;
+        if (virge->s3d.rop != 0xf0)
+                return 0;
+        if (virge->s3d.cmd_set & (1 << 1))
+                return 0;
+        if (x_inc != 1 || y_inc != 1)
+                return 0;
+        if (bpp > 1)
+                return 0;
+        if (virge->s3d.dest_str < 0)
+                return 0;
+
+        width_pixels = virge->s3d.r_width + 1;
+        height_rows = virge->s3d.r_height;
+        if (width_pixels <= 0 || height_rows <= 0)
+                return 0;
+        if ((virge->s3d.rdest_x + width_pixels - 1) > 0x7ff)
+                return 0;
+        if ((virge->s3d.rdest_y + height_rows - 1) > 0x7ff)
+                return 0;
+
+        row_bytes = width_pixels * x_mul;
+        base_addr = virge->s3d.dest_base + (virge->s3d.rdest_x * x_mul);
+
+        for (row = 0; row < height_rows; row++) {
+                uint32_t dest_addr = base_addr + ((virge->s3d.rdest_y + row) * virge->s3d.dest_str);
+
+                if (dest_addr > svga->vram_mask)
+                        return 0;
+                if ((row_bytes - 1) > (svga->vram_mask - dest_addr))
+                        return 0;
+        }
+
+        for (row = 0; row < height_rows; row++) {
+                uint32_t dest_addr = base_addr + ((virge->s3d.rdest_y + row) * virge->s3d.dest_str);
+                uint8_t *dst = &vram[dest_addr & svga->vram_mask];
+
+                if (!bpp)
+                        s3_virge_avx2_fill_u8(dst, virge->s3d.pat_fg_clr & 0xff, width_pixels);
+                else
+                        s3_virge_avx2_fill_u16(dst, virge->s3d.pat_fg_clr & 0xffff, width_pixels);
+                s3_virge_mark_changed_range(svga, dest_addr, row_bytes);
+        }
+
+        virge->s3d.src_x = virge->s3d.rsrc_x;
+        virge->s3d.dest_x = virge->s3d.rdest_x;
+        virge->s3d.w = virge->s3d.r_width;
+        virge->s3d.src_y = virge->s3d.rsrc_y + height_rows;
+        virge->s3d.dest_y = virge->s3d.rdest_y + height_rows;
+        virge->s3d.h = 0;
+
+        VIRGE_PERF_ADD(virge, rectfill_pixels, (uint64_t)width_pixels * (uint64_t)height_rows);
+        VIRGE_PERF_INC(virge, avx2_ops);
+        return 1;
+#else
+        (void)virge;
+        (void)svga;
+        (void)vram;
+        (void)bpp;
+        (void)x_mul;
+        (void)x_inc;
+        (void)y_inc;
+        return 0;
+#endif
+}
 
 static inline void wake_fifo_thread(virge_t *virge) {
         thread_set_event(virge->wake_fifo_thread); /*Wake up FIFO thread if moving from idle*/
@@ -2616,6 +2752,8 @@ static void s3_virge_bitblt(virge_t *virge, int count, uint32_t cpu_dat) {
                                                                                          virge->s3d.w,
                                                                                          virge->s3d.h,
                                                                                          virge->s3d.rop, virge->s3d.dest_base);*/
+                        if (s3_virge_rectfill_avx2(virge, svga, vram, bpp, x_mul, x_inc, y_inc))
+                                return;
                 }
 
                 while (count && virge->s3d.h) {
@@ -4466,6 +4604,8 @@ static void s3_virge_close(void *p) {
         fclose(f);
 #endif
 
+        thread_set_event(virge->wake_render_thread);
+        thread_set_event(virge->wake_fifo_thread);
         if (!s3_virge_wait_fifo_idle_bounded(virge, 2000) || !s3_virge_wait_renderer_idle_bounded(virge, 2000))
                 pclog("s3_virge_close: timed out waiting for idle, forcing shutdown\n");
 #ifdef PCEM_PERF_STATS
