@@ -902,6 +902,22 @@ static void s3_virge_wait_fifo_idle(virge_t *virge) {
         }
 }
 
+static int s3_virge_wait_fifo_idle_bounded(virge_t *virge, int timeout_ms) {
+        while (!FIFO_EMPTY && timeout_ms-- > 0) {
+                wake_fifo_thread(virge);
+                thread_wait_event(virge->fifo_not_full_event, 1);
+        }
+
+        return FIFO_EMPTY;
+}
+
+static int s3_virge_wait_renderer_idle_bounded(virge_t *virge, int timeout_ms) {
+        while ((virge->s3d_busy || virge->virge_busy) && timeout_ms-- > 0)
+                thread_sleep(1);
+
+        return !(virge->s3d_busy || virge->virge_busy);
+}
+
 static uint8_t s3_virge_mmio_read(uint32_t addr, void *p) {
         virge_t *virge = (virge_t *)p;
         uint8_t ret;
@@ -4449,9 +4465,8 @@ static void s3_virge_close(void *p) {
         fclose(f);
 #endif
 
-        s3_virge_wait_fifo_idle(virge);
-        while (virge->s3d_busy || virge->virge_busy)
-                thread_sleep(1);
+        if (!s3_virge_wait_fifo_idle_bounded(virge, 2000) || !s3_virge_wait_renderer_idle_bounded(virge, 2000))
+                pclog("s3_virge_close: timed out waiting for idle, forcing shutdown\n");
 
 #ifdef PCEM_PERF_STATS
         s3_virge_perf_snapshot(virge, &perf_snapshot);
