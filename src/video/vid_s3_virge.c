@@ -126,6 +126,26 @@ typedef struct virge_perf_stats_t {
 #endif
 } virge_perf_stats_t;
 
+#ifdef PCEM_PERF_STATS
+typedef struct virge_perf_dump_t {
+        uint64_t bitblt_ops;
+        uint64_t bitblt_pixels;
+        uint64_t rectfill_ops;
+        uint64_t rectfill_pixels;
+        uint64_t line_ops;
+        uint64_t poly_ops;
+        uint64_t triangles;
+        uint64_t rasterized_pixels;
+        uint64_t texture_samples;
+        uint64_t vram_reads;
+        uint64_t vram_writes;
+        uint64_t scalar_ops;
+        uint64_t avx2_ops;
+        uint64_t cpu_time;
+        uint64_t rop_usage[256];
+} virge_perf_dump_t;
+#endif
+
 typedef struct virge_t {
         mem_mapping_t linear_mapping;
         mem_mapping_t mmio_mapping;
@@ -254,19 +274,32 @@ typedef struct virge_t {
 
         uint8_t serialport;
         virge_perf_stats_t perf;
-#ifdef PCEM_PERF_STATS
-        mutex_t *perf_mutex;
-#endif
 } virge_t;
 
 #ifdef PCEM_PERF_STATS
-static void s3_virge_perf_snapshot(virge_t *virge, virge_perf_stats_t *snapshot) {
-        thread_lock_mutex(virge->perf_mutex);
-        *snapshot = virge->perf;
-        thread_unlock_mutex(virge->perf_mutex);
+static void s3_virge_perf_snapshot(virge_t *virge, virge_perf_dump_t *snapshot) {
+        int rop;
+
+        snapshot->bitblt_ops = __atomic_load_n(&virge->perf.bitblt_ops, __ATOMIC_RELAXED);
+        snapshot->bitblt_pixels = __atomic_load_n(&virge->perf.bitblt_pixels, __ATOMIC_RELAXED);
+        snapshot->rectfill_ops = __atomic_load_n(&virge->perf.rectfill_ops, __ATOMIC_RELAXED);
+        snapshot->rectfill_pixels = __atomic_load_n(&virge->perf.rectfill_pixels, __ATOMIC_RELAXED);
+        snapshot->line_ops = __atomic_load_n(&virge->perf.line_ops, __ATOMIC_RELAXED);
+        snapshot->poly_ops = __atomic_load_n(&virge->perf.poly_ops, __ATOMIC_RELAXED);
+        snapshot->triangles = __atomic_load_n(&virge->perf.triangles, __ATOMIC_RELAXED);
+        snapshot->rasterized_pixels = __atomic_load_n(&virge->perf.rasterized_pixels, __ATOMIC_RELAXED);
+        snapshot->texture_samples = __atomic_load_n(&virge->perf.texture_samples, __ATOMIC_RELAXED);
+        snapshot->vram_reads = __atomic_load_n(&virge->perf.vram_reads, __ATOMIC_RELAXED);
+        snapshot->vram_writes = __atomic_load_n(&virge->perf.vram_writes, __ATOMIC_RELAXED);
+        snapshot->scalar_ops = __atomic_load_n(&virge->perf.scalar_ops, __ATOMIC_RELAXED);
+        snapshot->avx2_ops = __atomic_load_n(&virge->perf.avx2_ops, __ATOMIC_RELAXED);
+        snapshot->cpu_time = __atomic_load_n(&virge->perf.cpu_time, __ATOMIC_RELAXED);
+
+        for (rop = 0; rop < 256; rop++)
+                snapshot->rop_usage[rop] = __atomic_load_n(&virge->perf.rop_usage[rop], __ATOMIC_RELAXED);
 }
 
-static void s3_virge_perf_dump(const virge_perf_stats_t *perf) {
+static void s3_virge_perf_dump(const virge_perf_dump_t *perf) {
         int rop;
 
         pclog("s3-virge stats:\n");
@@ -292,21 +325,15 @@ static void s3_virge_perf_dump(const virge_perf_stats_t *perf) { (void)perf; }
 #ifdef PCEM_PERF_STATS
 #define VIRGE_PERF_INC(virge, field)                                                                                              \
         do {                                                                                                                     \
-                thread_lock_mutex((virge)->perf_mutex);                                                                          \
-                (virge)->perf.field++;                                                                                           \
-                thread_unlock_mutex((virge)->perf_mutex);                                                                        \
+                __atomic_add_fetch(&(virge)->perf.field, 1, __ATOMIC_RELAXED);                                                  \
         } while (0)
 #define VIRGE_PERF_ADD(virge, field, value)                                                                                      \
         do {                                                                                                                     \
-                thread_lock_mutex((virge)->perf_mutex);                                                                          \
-                (virge)->perf.field += (value);                                                                                  \
-                thread_unlock_mutex((virge)->perf_mutex);                                                                        \
+                __atomic_add_fetch(&(virge)->perf.field, (value), __ATOMIC_RELAXED);                                            \
         } while (0)
 #define VIRGE_PERF_ROP(virge, rop)                                                                                               \
         do {                                                                                                                     \
-                thread_lock_mutex((virge)->perf_mutex);                                                                          \
-                (virge)->perf.rop_usage[(rop)]++;                                                                                \
-                thread_unlock_mutex((virge)->perf_mutex);                                                                        \
+                __atomic_add_fetch(&(virge)->perf.rop_usage[(rop)], 1, __ATOMIC_RELAXED);                                       \
         } while (0)
 #else
 #define VIRGE_PERF_INC(virge, field) ((void)(virge))
@@ -4321,9 +4348,6 @@ static void *s3_virge_init() {
         virge->wake_render_thread = thread_create_event();
         virge->wake_main_thread = thread_create_event();
         virge->not_full_event = thread_create_event();
-#ifdef PCEM_PERF_STATS
-        virge->perf_mutex = thread_create_mutex();
-#endif
         virge->render_thread = thread_create(render_thread, virge);
 
         virge->wake_fifo_thread = thread_create_event();
@@ -4400,9 +4424,6 @@ static void *s3_virge_375_init() {
         virge->wake_render_thread = thread_create_event();
         virge->wake_main_thread = thread_create_event();
         virge->not_full_event = thread_create_event();
-#ifdef PCEM_PERF_STATS
-        virge->perf_mutex = thread_create_mutex();
-#endif
         virge->render_thread = thread_create(render_thread, virge);
 
         virge->wake_fifo_thread = thread_create_event();
@@ -4420,7 +4441,7 @@ static void *s3_virge_375_init() {
 static void s3_virge_close(void *p) {
         virge_t *virge = (virge_t *)p;
 #ifdef PCEM_PERF_STATS
-        virge_perf_stats_t perf_snapshot;
+        virge_perf_dump_t perf_snapshot;
 #endif
 #ifndef RELEASE_BUILD
         FILE *f = fopen("vram.dmp", "wb");
@@ -4440,7 +4461,6 @@ static void s3_virge_close(void *p) {
 #ifdef PCEM_PERF_STATS
         s3_virge_perf_snapshot(virge, &perf_snapshot);
         s3_virge_perf_dump(&perf_snapshot);
-        thread_destroy_mutex(virge->perf_mutex);
 #endif
 
         svga_close(&virge->svga);
