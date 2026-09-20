@@ -1036,9 +1036,9 @@ generate_call:
         }
 
         if (recomp_op_table && recomp_op_table[(opcode | op_32) & 0x1ff]) {
+                cpu_dynarec_perf_record_native_instruction();
                 uint32_t new_pc = recomp_op_table[(opcode | op_32) & 0x1ff](opcode, fetchdat, op_32, op_pc, block);
                 if (new_pc) {
-                        cpu_dynarec_perf_record_native_instruction();
                         if (new_pc != -1)
                                 STORE_IMM_ADDR_L((uintptr_t)&cpu_state.pc, new_pc);
 
