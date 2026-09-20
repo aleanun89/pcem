@@ -4468,11 +4468,6 @@ static void s3_virge_close(void *p) {
         if (!s3_virge_wait_fifo_idle_bounded(virge, 2000) || !s3_virge_wait_renderer_idle_bounded(virge, 2000))
                 pclog("s3_virge_close: timed out waiting for idle, forcing shutdown\n");
 
-#ifdef PCEM_PERF_STATS
-        s3_virge_perf_snapshot(virge, &perf_snapshot);
-        s3_virge_perf_dump(&perf_snapshot);
-#endif
-
         thread_kill_join(virge->render_thread);
         thread_kill_join(virge->fifo_thread);
         thread_destroy_event(virge->not_full_event);
@@ -4481,6 +4476,11 @@ static void s3_virge_close(void *p) {
 
         thread_destroy_event(virge->wake_fifo_thread);
         thread_destroy_event(virge->fifo_not_full_event);
+
+#ifdef PCEM_PERF_STATS
+        s3_virge_perf_snapshot(virge, &perf_snapshot);
+        s3_virge_perf_dump(&perf_snapshot);
+#endif
 
         svga_close(&virge->svga);
 
