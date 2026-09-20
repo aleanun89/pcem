@@ -38,8 +38,8 @@ Esta entrega mantiene la semántica existente y se limita a instrumentación opc
 Compilar con:
 
 ```sh
-cmake -S /home/runner/work/pcem/pcem -B /home/runner/work/pcem/pcem/build -DPCEM_PERF_STATS=ON
-cmake --build /home/runner/work/pcem/pcem/build -j
+cmake -S . -B build -DPCEM_PERF_STATS=ON
+cmake --build build -j
 ```
 
 Con `PCEM_PERF_STATS=ON`, al cerrar el emulador se vuelcan a `pclog`:
@@ -73,9 +73,9 @@ No hay infraestructura de benchmark automatizada en este árbol ni ROMs/fixtures
 Comandos reproducibles propuestos (no ejecutados aquí):
 
 ```sh
-cmake -S /home/runner/work/pcem/pcem -B /home/runner/work/pcem/pcem/build-rel -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPCEM_PERF_STATS=ON
-cmake --build /home/runner/work/pcem/pcem/build-rel -j
-/home/runner/work/pcem/pcem/build-rel/src/pcem
+cmake -S . -B build-rel -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPCEM_PERF_STATS=ON
+cmake --build build-rel -j
+./build-rel/src/pcem
 ```
 
 Procedimiento manual sugerido (no ejecutado aquí):

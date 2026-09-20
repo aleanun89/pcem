@@ -2210,10 +2210,11 @@ static void s3_virge_mmio_write_l(uint32_t addr, uint32_t val, void *p) {
         (VIRGE_PERF_INC(virge, vram_reads), *(uint16_t *)&vram[addr & svga->vram_mask])
 
 #define Z_WRITE(addr, val)                                                                                                       \
-        if (!(s3d_tri->cmd_set & CMD_SET_ZB_MODE))                                                                               \
         do {                                                                                                                     \
-                *(uint16_t *)&vram[addr & svga->vram_mask] = val;                                                                \
-                VIRGE_PERF_INC(virge, vram_writes);                                                                              \
+                if (!(s3d_tri->cmd_set & CMD_SET_ZB_MODE)) {                                                                     \
+                        *(uint16_t *)&vram[addr & svga->vram_mask] = val;                                                        \
+                        VIRGE_PERF_INC(virge, vram_writes);                                                                      \
+                }                                                                                                                \
         } while (0)
 
 #define CLIP(x, y)                                                                                                               \
@@ -4382,8 +4383,6 @@ static void s3_virge_close(void *p) {
         fclose(f);
 #endif
 
-        s3_virge_perf_dump(virge);
-
         thread_kill(virge->render_thread);
         thread_destroy_event(virge->not_full_event);
         thread_destroy_event(virge->wake_main_thread);
@@ -4392,6 +4391,8 @@ static void s3_virge_close(void *p) {
         thread_kill(virge->fifo_thread);
         thread_destroy_event(virge->wake_fifo_thread);
         thread_destroy_event(virge->fifo_not_full_event);
+
+        s3_virge_perf_dump(virge);
 
         svga_close(&virge->svga);
 
