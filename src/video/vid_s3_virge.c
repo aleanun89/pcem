@@ -412,6 +412,10 @@ static __attribute__((target("avx2"))) void s3_virge_avx2_fill_u16(uint8_t *dst,
 
 static int s3_virge_rectfill_avx2(virge_t *virge, svga_t *svga, uint8_t *vram, int bpp, int x_mul, int x_inc, int y_inc) {
 #if VIRGE_HAVE_AVX2_TARGET
+        const int clip_enabled = virge->s3d.cmd_set & (1 << 1);
+        const int dest_stride = virge->s3d.dest_str;
+        const int dest_x = virge->s3d.rdest_x;
+        const int dest_y = virge->s3d.rdest_y;
         int row;
         int width_pixels;
         int height_rows;
@@ -422,29 +426,31 @@ static int s3_virge_rectfill_avx2(virge_t *virge, svga_t *svga, uint8_t *vram, i
                 return 0;
         if (virge->s3d.rop != 0xf0)
                 return 0;
-        if (virge->s3d.cmd_set & (1 << 1))
+        if (clip_enabled)
                 return 0;
         if (x_inc != 1 || y_inc != 1)
                 return 0;
         if (bpp > 1)
                 return 0;
-        if (virge->s3d.dest_str < 0)
+        if (dest_stride < 0)
                 return 0;
 
         width_pixels = virge->s3d.r_width + 1;
         height_rows = virge->s3d.r_height;
         if (width_pixels <= 0 || height_rows <= 0)
                 return 0;
-        if ((virge->s3d.rdest_x + width_pixels - 1) > 0x7ff)
+        if (dest_x < 0 || dest_y < 0)
                 return 0;
-        if ((virge->s3d.rdest_y + height_rows - 1) > 0x7ff)
+        if ((dest_x + width_pixels - 1) > 0x7ff)
+                return 0;
+        if ((dest_y + height_rows - 1) > 0x7ff)
                 return 0;
 
         row_bytes = width_pixels * x_mul;
-        base_addr = virge->s3d.dest_base + (virge->s3d.rdest_x * x_mul);
+        base_addr = virge->s3d.dest_base + (dest_x * x_mul);
 
         for (row = 0; row < height_rows; row++) {
-                uint32_t dest_addr = base_addr + ((virge->s3d.rdest_y + row) * virge->s3d.dest_str);
+                uint32_t dest_addr = base_addr + ((dest_y + row) * dest_stride);
 
                 if (dest_addr > svga->vram_mask)
                         return 0;
@@ -453,7 +459,7 @@ static int s3_virge_rectfill_avx2(virge_t *virge, svga_t *svga, uint8_t *vram, i
         }
 
         for (row = 0; row < height_rows; row++) {
-                uint32_t dest_addr = base_addr + ((virge->s3d.rdest_y + row) * virge->s3d.dest_str);
+                uint32_t dest_addr = base_addr + ((dest_y + row) * dest_stride);
                 uint8_t *dst = &vram[dest_addr & svga->vram_mask];
 
                 if (!bpp)
