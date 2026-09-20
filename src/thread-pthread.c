@@ -17,7 +17,7 @@ thread_t *thread_create(void (*thread_rout)(void *param), void *param) {
         return thread;
 }
 
-void thread_kill(thread_t *handle) {
+void thread_kill_join(thread_t *handle) {
         pthread_t *thread = (pthread_t *)handle;
 
         pthread_cancel(*thread);
@@ -25,6 +25,8 @@ void thread_kill(thread_t *handle) {
 
         free(thread);
 }
+
+void thread_kill(thread_t *handle) { thread_kill_join(handle); }
 
 event_t *thread_create_event() {
         event_pthread_t *event = malloc(sizeof(event_pthread_t));
@@ -77,3 +79,22 @@ void thread_destroy_event(event_t *handle) {
 }
 
 void thread_sleep(int t) { usleep(t * 1000); }
+
+mutex_t *thread_create_mutex(void) {
+        pthread_mutex_t *mutex = malloc(sizeof(pthread_mutex_t));
+
+        pthread_mutex_init(mutex, NULL);
+
+        return (mutex_t *)mutex;
+}
+
+void thread_lock_mutex(mutex_t *handle) { pthread_mutex_lock((pthread_mutex_t *)handle); }
+
+void thread_unlock_mutex(mutex_t *handle) { pthread_mutex_unlock((pthread_mutex_t *)handle); }
+
+void thread_destroy_mutex(mutex_t *handle) {
+        pthread_mutex_t *mutex = (pthread_mutex_t *)handle;
+
+        pthread_mutex_destroy(mutex);
+        free(mutex);
+}

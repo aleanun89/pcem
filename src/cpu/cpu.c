@@ -101,6 +101,12 @@ int CPUID;
 
 uint64_t tsc = 0;
 
+void __attribute__((weak)) cpu_dynarec_perf_record_native_instruction() {}
+void __attribute__((weak)) cpu_dynarec_perf_record_handler_call() {}
+void __attribute__((weak)) cpu_dynarec_perf_record_block_invalidated() {}
+void __attribute__((weak)) cpu_dynarec_perf_record_block_compiled() {}
+void __attribute__((weak)) cpu_dynarec_perf_dump() {}
+
 int timing_rr;
 int timing_mr, timing_mrl;
 int timing_rm, timing_rml;

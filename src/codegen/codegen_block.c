@@ -468,6 +468,9 @@ void codegen_check_flush(page_t *page, uint64_t mask, uint32_t phys_addr) {
                         //                        %02x\n", phys_addr, block->pc, *block->dirty_mask, block->page_mask,
                         //                        *block->dirty_mask & block->page_mask, block->flags);
                         invalidate_block(block);
+#ifdef PCEM_PERF_STATS
+                        cpu_dynarec_perf_record_block_invalidated();
+#endif
                         cpu_recomp_evicted++;
                 }
 #ifndef RELEASE_BUILD
@@ -487,6 +490,9 @@ void codegen_check_flush(page_t *page, uint64_t mask, uint32_t phys_addr) {
                         //                        pclog("Delete block from codegen_check_flush2 %08x %08x\n", phys_addr,
                         //                        block->pc);*/
                         invalidate_block(block);
+#ifdef PCEM_PERF_STATS
+                        cpu_dynarec_perf_record_block_invalidated();
+#endif
                         cpu_recomp_evicted++;
                 }
 #ifndef RELEASE_BUILD
@@ -764,6 +770,9 @@ void codegen_block_end() {
 void codegen_block_end_recompile(codeblock_t *block) {
         codegen_timing_block_end();
         codegen_accumulate(ACCREG_cycles, -codegen_block_cycles);
+#ifdef PCEM_PERF_STATS
+        cpu_dynarec_perf_record_block_compiled();
+#endif
 
         if (block->flags & CODEBLOCK_IN_DIRTY_LIST)
                 block_dirty_list_remove(block);

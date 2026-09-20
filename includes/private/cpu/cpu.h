@@ -170,6 +170,11 @@ void cpu_set_turbo(int turbo);
 int cpu_get_turbo();
 void cpu_set_nonturbo_divider(int divider);
 int cpu_get_speed();
+void cpu_dynarec_perf_record_native_instruction();
+void cpu_dynarec_perf_record_handler_call();
+void cpu_dynarec_perf_record_block_invalidated();
+void cpu_dynarec_perf_record_block_compiled();
+void cpu_dynarec_perf_dump();
 
 extern int has_vlb;
 

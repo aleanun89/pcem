@@ -1,5 +1,11 @@
 /*S3 ViRGE emulation*/
 #include <stdlib.h>
+#if (defined(__x86_64__) || defined(__i386__)) && (defined(__GNUC__) || defined(__clang__))
+#include <immintrin.h>
+#define VIRGE_HAVE_AVX2_TARGET 1
+#else
+#define VIRGE_HAVE_AVX2_TARGET 0
+#endif
 #include "ibm.h"
 #include "device.h"
 #include "io.h"
@@ -103,6 +109,50 @@ typedef struct s3d_t {
         uint32_t tys;
         int ty01, ty12, tlr;
 } s3d_t;
+
+typedef struct virge_perf_stats_t {
+#ifdef PCEM_PERF_STATS
+        uint64_t bitblt_ops;
+        uint64_t bitblt_pixels;
+        uint64_t rectfill_ops;
+        uint64_t rectfill_pixels;
+        uint64_t line_ops;
+        uint64_t poly_ops;
+        uint64_t triangles;
+        uint64_t rasterized_pixels;
+        uint64_t texture_samples;
+        uint64_t vram_reads;
+        uint64_t vram_writes;
+        uint64_t scalar_ops;
+        uint64_t avx2_ops;
+        uint64_t cpu_time;
+        uint64_t rop_usage[256];
+#else
+        int unused;
+#endif
+} virge_perf_stats_t;
+
+#ifdef PCEM_PERF_STATS
+typedef struct virge_perf_dump_t {
+        uint64_t bitblt_ops;
+        uint64_t bitblt_pixels;
+        uint64_t rectfill_ops;
+        uint64_t rectfill_pixels;
+        uint64_t line_ops;
+        uint64_t poly_ops;
+        uint64_t triangles;
+        uint64_t rasterized_pixels;
+        uint64_t texture_samples;
+        uint64_t vram_reads;
+        uint64_t vram_writes;
+        uint64_t scalar_ops;
+        uint64_t avx2_ops;
+        uint64_t cpu_time;
+        uint64_t rop_usage[256];
+} virge_perf_dump_t;
+#else
+typedef virge_perf_stats_t virge_perf_dump_t;
+#endif
 
 typedef struct virge_t {
         mem_mapping_t linear_mapping;
@@ -231,7 +281,215 @@ typedef struct virge_t {
         uint8_t subsys_stat, subsys_cntl;
 
         uint8_t serialport;
+        virge_perf_stats_t perf;
 } virge_t;
+
+#ifdef PCEM_PERF_STATS
+static void s3_virge_perf_snapshot(virge_t *virge, virge_perf_dump_t *snapshot) {
+        int rop;
+
+        snapshot->bitblt_ops = __atomic_load_n(&virge->perf.bitblt_ops, __ATOMIC_RELAXED);
+        snapshot->bitblt_pixels = __atomic_load_n(&virge->perf.bitblt_pixels, __ATOMIC_RELAXED);
+        snapshot->rectfill_ops = __atomic_load_n(&virge->perf.rectfill_ops, __ATOMIC_RELAXED);
+        snapshot->rectfill_pixels = __atomic_load_n(&virge->perf.rectfill_pixels, __ATOMIC_RELAXED);
+        snapshot->line_ops = __atomic_load_n(&virge->perf.line_ops, __ATOMIC_RELAXED);
+        snapshot->poly_ops = __atomic_load_n(&virge->perf.poly_ops, __ATOMIC_RELAXED);
+        snapshot->triangles = __atomic_load_n(&virge->perf.triangles, __ATOMIC_RELAXED);
+        snapshot->rasterized_pixels = __atomic_load_n(&virge->perf.rasterized_pixels, __ATOMIC_RELAXED);
+        snapshot->texture_samples = __atomic_load_n(&virge->perf.texture_samples, __ATOMIC_RELAXED);
+        snapshot->vram_reads = __atomic_load_n(&virge->perf.vram_reads, __ATOMIC_RELAXED);
+        snapshot->vram_writes = __atomic_load_n(&virge->perf.vram_writes, __ATOMIC_RELAXED);
+        snapshot->scalar_ops = __atomic_load_n(&virge->perf.scalar_ops, __ATOMIC_RELAXED);
+        snapshot->avx2_ops = __atomic_load_n(&virge->perf.avx2_ops, __ATOMIC_RELAXED);
+        snapshot->cpu_time = __atomic_load_n(&virge->perf.cpu_time, __ATOMIC_RELAXED);
+
+        for (rop = 0; rop < 256; rop++)
+                snapshot->rop_usage[rop] = __atomic_load_n(&virge->perf.rop_usage[rop], __ATOMIC_RELAXED);
+}
+
+static void s3_virge_perf_dump(const virge_perf_dump_t *perf) {
+        int rop;
+
+        pclog("s3-virge stats:\n");
+        pclog("  bitblt_ops=%llu bitblt_pixels=%llu rectfill_ops=%llu rectfill_pixels=%llu line_ops=%llu poly_ops=%llu triangles=%llu rasterized_pixels=%llu texture_samples=%llu\n",
+              (unsigned long long)perf->bitblt_ops, (unsigned long long)perf->bitblt_pixels,
+              (unsigned long long)perf->rectfill_ops, (unsigned long long)perf->rectfill_pixels,
+              (unsigned long long)perf->line_ops, (unsigned long long)perf->poly_ops,
+              (unsigned long long)perf->triangles, (unsigned long long)perf->rasterized_pixels,
+              (unsigned long long)perf->texture_samples);
+        pclog("  vram_reads=%llu vram_writes=%llu scalar_ops=%llu avx2_ops=%llu cpu_time_ticks=%llu\n",
+              (unsigned long long)perf->vram_reads, (unsigned long long)perf->vram_writes,
+              (unsigned long long)perf->scalar_ops, (unsigned long long)perf->avx2_ops,
+              (unsigned long long)perf->cpu_time);
+        for (rop = 0; rop < 256; rop++) {
+                if (perf->rop_usage[rop])
+                        pclog("  rop[0x%02x]=%llu\n", rop, (unsigned long long)perf->rop_usage[rop]);
+        }
+}
+#else
+static void s3_virge_perf_dump(const virge_perf_dump_t *perf) { (void)perf; }
+#endif
+
+#ifdef PCEM_PERF_STATS
+#define VIRGE_PERF_INC(virge, field)                                                                                              \
+        do {                                                                                                                     \
+                __atomic_add_fetch(&(virge)->perf.field, 1, __ATOMIC_RELAXED);                                                  \
+        } while (0)
+#define VIRGE_PERF_ADD(virge, field, value)                                                                                      \
+        do {                                                                                                                     \
+                __atomic_add_fetch(&(virge)->perf.field, (value), __ATOMIC_RELAXED);                                            \
+        } while (0)
+#define VIRGE_PERF_ROP(virge, rop)                                                                                               \
+        do {                                                                                                                     \
+                __atomic_add_fetch(&(virge)->perf.rop_usage[(rop)], 1, __ATOMIC_RELAXED);                                       \
+        } while (0)
+#else
+#define VIRGE_PERF_INC(virge, field) ((void)(virge))
+#define VIRGE_PERF_ADD(virge, field, value)                                                                                      \
+        do {                                                                                                                     \
+                (void)(virge);                                                                                                   \
+                (void)(value);                                                                                                   \
+        } while (0)
+#define VIRGE_PERF_ROP(virge, rop)                                                                                               \
+        do {                                                                                                                     \
+                (void)(virge);                                                                                                   \
+                (void)(rop);                                                                                                     \
+        } while (0)
+#endif
+
+static void s3_virge_mark_changed_range(svga_t *svga, uint32_t addr, uint32_t bytes) {
+        uint32_t start_page;
+        uint32_t end_page;
+        uint32_t page;
+
+        if (!bytes)
+                return;
+
+        start_page = (addr & svga->vram_mask) >> 12;
+        end_page = ((addr + bytes - 1) & svga->vram_mask) >> 12;
+
+        for (page = start_page; page <= end_page; page++)
+                svga->changedvram[page] = changeframecount;
+}
+
+#if VIRGE_HAVE_AVX2_TARGET
+static int s3_virge_host_has_avx2(void) {
+        static int avx2_available = -1;
+
+        if (avx2_available == -1) {
+                __builtin_cpu_init();
+                avx2_available = __builtin_cpu_supports("avx2") ? 1 : 0;
+        }
+
+        return avx2_available;
+}
+
+static __attribute__((target("avx2"))) void s3_virge_avx2_fill_u8(uint8_t *dst, uint8_t value, int pixels) {
+        __m256i fill = _mm256_set1_epi8((char)value);
+
+        while (pixels >= 32) {
+                _mm256_storeu_si256((__m256i *)dst, fill);
+                dst += 32;
+                pixels -= 32;
+        }
+        while (pixels--)
+                *dst++ = value;
+}
+
+static __attribute__((target("avx2"))) void s3_virge_avx2_fill_u16(uint8_t *dst, uint16_t value, int pixels) {
+        __m256i fill = _mm256_set1_epi16((short)value);
+        uint16_t *dst16 = (uint16_t *)dst;
+
+        while (pixels >= 16) {
+                _mm256_storeu_si256((__m256i *)dst16, fill);
+                dst16 += 16;
+                pixels -= 16;
+        }
+        while (pixels--)
+                *dst16++ = value;
+}
+#endif
+
+static int s3_virge_rectfill_avx2(virge_t *virge, svga_t *svga, uint8_t *vram, int bpp, int x_mul, int x_inc, int y_inc) {
+#if VIRGE_HAVE_AVX2_TARGET
+        const int clip_enabled = virge->s3d.cmd_set & (1 << 1);
+        const int dest_stride = virge->s3d.dest_str;
+        const int dest_x = virge->s3d.rdest_x;
+        const int dest_y = virge->s3d.rdest_y;
+        int row;
+        int width_pixels;
+        int height_rows;
+        uint32_t row_bytes;
+        uint32_t base_addr;
+
+        if (!s3_virge_host_has_avx2())
+                return 0;
+        if (virge->s3d.rop != 0xf0)
+                return 0;
+        if (clip_enabled)
+                return 0;
+        if (x_inc != 1 || y_inc != 1)
+                return 0;
+        if (bpp > 1)
+                return 0;
+        if (dest_stride < 0)
+                return 0;
+
+        width_pixels = virge->s3d.r_width + 1;
+        height_rows = virge->s3d.r_height;
+        if (width_pixels <= 0 || height_rows <= 0)
+                return 0;
+        if (dest_x < 0 || dest_y < 0)
+                return 0;
+        if ((dest_x + width_pixels - 1) > 0x7ff)
+                return 0;
+        if ((dest_y + height_rows - 1) > 0x7ff)
+                return 0;
+
+        row_bytes = width_pixels * x_mul;
+        base_addr = virge->s3d.dest_base + (dest_x * x_mul);
+
+        for (row = 0; row < height_rows; row++) {
+                uint32_t dest_addr = base_addr + ((dest_y + row) * dest_stride);
+
+                if (dest_addr > svga->vram_mask)
+                        return 0;
+                if ((row_bytes - 1) > (svga->vram_mask - dest_addr))
+                        return 0;
+        }
+
+        for (row = 0; row < height_rows; row++) {
+                uint32_t dest_addr = base_addr + ((dest_y + row) * dest_stride);
+                uint8_t *dst = &vram[dest_addr & svga->vram_mask];
+
+                if (!bpp)
+                        s3_virge_avx2_fill_u8(dst, virge->s3d.pat_fg_clr & 0xff, width_pixels);
+                else
+                        s3_virge_avx2_fill_u16(dst, virge->s3d.pat_fg_clr & 0xffff, width_pixels);
+                s3_virge_mark_changed_range(svga, dest_addr, row_bytes);
+        }
+
+        virge->s3d.src_x = virge->s3d.rsrc_x;
+        virge->s3d.dest_x = virge->s3d.rdest_x;
+        virge->s3d.w = virge->s3d.r_width;
+        virge->s3d.src_y = virge->s3d.rsrc_y + height_rows;
+        virge->s3d.dest_y = virge->s3d.rdest_y + height_rows;
+        virge->s3d.h = 0;
+
+        VIRGE_PERF_ADD(virge, rectfill_pixels, (uint64_t)width_pixels * (uint64_t)height_rows);
+        VIRGE_PERF_INC(virge, avx2_ops);
+        return 1;
+#else
+        (void)virge;
+        (void)svga;
+        (void)vram;
+        (void)bpp;
+        (void)x_mul;
+        (void)x_inc;
+        (void)y_inc;
+        return 0;
+#endif
+}
 
 static inline void wake_fifo_thread(virge_t *virge) {
         thread_set_event(virge->wake_fifo_thread); /*Wake up FIFO thread if moving from idle*/
@@ -784,6 +1042,22 @@ static void s3_virge_wait_fifo_idle(virge_t *virge) {
                 wake_fifo_thread(virge);
                 thread_wait_event(virge->fifo_not_full_event, 1);
         }
+}
+
+static int s3_virge_wait_fifo_idle_bounded(virge_t *virge, int timeout_ms) {
+        while (!FIFO_EMPTY && timeout_ms-- > 0) {
+                wake_fifo_thread(virge);
+                thread_wait_event(virge->fifo_not_full_event, 1);
+        }
+
+        return FIFO_EMPTY;
+}
+
+static int s3_virge_wait_renderer_idle_bounded(virge_t *virge, int timeout_ms) {
+        while ((virge->s3d_busy || virge->virge_busy) && timeout_ms-- > 0)
+                thread_sleep(1);
+
+        return !(virge->s3d_busy || virge->virge_busy);
 }
 
 static uint8_t s3_virge_mmio_read(uint32_t addr, void *p) {
@@ -1468,6 +1742,7 @@ static void fifo_thread(void *param) {
 
                         end_time = timer_read();
                         virge_time += end_time - start_time;
+                        VIRGE_PERF_ADD(virge, cpu_time, end_time - start_time);
                 }
                 virge->virge_busy = 0;
                 virge->subsys_stat |= INT_FIFO_EMP | INT_3DF_EMP;
@@ -2141,13 +2416,23 @@ static void s3_virge_mmio_write_l(uint32_t addr, uint32_t val, void *p) {
                         val = (*(uint32_t *)&vram[addr & svga->vram_mask]) & 0xffffff;                                           \
                         break;                                                                                                   \
                 }                                                                                                                \
+                VIRGE_PERF_INC(virge, vram_reads);                                                                               \
         } while (0)
 
-#define Z_READ(addr) *(uint16_t *)&vram[addr & svga->vram_mask]
+static inline uint16_t s3_virge_z_read(virge_t *virge, svga_t *svga, uint8_t *vram, uint32_t addr) {
+        VIRGE_PERF_INC(virge, vram_reads);
+        return *(uint16_t *)&vram[addr & svga->vram_mask];
+}
+
+#define Z_READ(addr) s3_virge_z_read(virge, svga, vram, addr)
 
 #define Z_WRITE(addr, val)                                                                                                       \
-        if (!(s3d_tri->cmd_set & CMD_SET_ZB_MODE))                                                                               \
-        *(uint16_t *)&vram[addr & svga->vram_mask] = val
+        do {                                                                                                                     \
+                if (!(s3d_tri->cmd_set & CMD_SET_ZB_MODE)) {                                                                     \
+                        *(uint16_t *)&vram[addr & svga->vram_mask] = val;                                                        \
+                        VIRGE_PERF_INC(virge, vram_writes);                                                                      \
+                }                                                                                                                \
+        } while (0)
 
 #define CLIP(x, y)                                                                                                               \
         do {                                                                                                                     \
@@ -2225,6 +2510,7 @@ static void s3_virge_mmio_write_l(uint32_t addr, uint32_t val, void *p) {
                         if (virge->s3d.rop & (1 << d))                                                                           \
                                 out |= (1 << c);                                                                                 \
                 }                                                                                                                \
+                VIRGE_PERF_INC(virge, scalar_ops);                                                                               \
         } while (0)
 
 #define WRITE(addr, val)                                                                                                         \
@@ -2244,6 +2530,7 @@ static void s3_virge_mmio_write_l(uint32_t addr, uint32_t val, void *p) {
                         virge->svga.changedvram[(addr & svga->vram_mask) >> 12] = changeframecount;                              \
                         break;                                                                                                   \
                 }                                                                                                                \
+                VIRGE_PERF_INC(virge, vram_writes);                                                                              \
         } while (0)
 
 static void s3_virge_bitblt(virge_t *virge, int count, uint32_t cpu_dat) {
@@ -2320,7 +2607,8 @@ static void s3_virge_bitblt(virge_t *virge, int count, uint32_t cpu_dat) {
         case CMD_SET_COMMAND_NOP:
                 break;
 
-        case CMD_SET_COMMAND_BITBLT:
+        case CMD_SET_COMMAND_BITBLT: {
+                uint64_t bitblt_pixels = 0;
                 if (count == -1) {
                         virge->s3d.src_x = virge->s3d.rsrc_x;
                         virge->s3d.src_y = virge->s3d.rsrc_y;
@@ -2330,6 +2618,10 @@ static void s3_virge_bitblt(virge_t *virge, int count, uint32_t cpu_dat) {
                         virge->s3d.h = virge->s3d.r_height;
                         virge->s3d.rop = (virge->s3d.cmd_set >> 17) & 0xff;
                         virge->s3d.data_left_count = 0;
+#ifdef PCEM_PERF_STATS
+                        VIRGE_PERF_INC(virge, bitblt_ops);
+                        VIRGE_PERF_ROP(virge, virge->s3d.rop);
+#endif
 
                         /*                        pclog("BitBlt start %i,%i %i,%i %i,%i %02X %x %x\n",
                                                                                          virge->s3d.src_x,
@@ -2407,6 +2699,7 @@ static void s3_virge_bitblt(virge_t *virge, int count, uint32_t cpu_dat) {
 
                                 WRITE(dest_addr, out);
                         }
+                        bitblt_pixels++;
 
                         virge->s3d.src_x += x_inc;
                         virge->s3d.src_x &= 0x7ff;
@@ -2434,15 +2727,19 @@ static void s3_virge_bitblt(virge_t *virge, int count, uint32_t cpu_dat) {
                                         break;
                                 }
                                 if (!virge->s3d.h) {
+                                        VIRGE_PERF_ADD(virge, bitblt_pixels, bitblt_pixels);
                                         return;
                                 }
                         } else
                                 virge->s3d.w--;
                 }
+                VIRGE_PERF_ADD(virge, bitblt_pixels, bitblt_pixels);
                 break;
+        }
 
-        case CMD_SET_COMMAND_RECTFILL:
+        case CMD_SET_COMMAND_RECTFILL: {
                 /*No source, pattern = pat_fg_clr*/
+                uint64_t rectfill_pixels = 0;
                 if (count == -1) {
                         virge->s3d.src_x = virge->s3d.rsrc_x;
                         virge->s3d.src_y = virge->s3d.rsrc_y;
@@ -2451,12 +2748,18 @@ static void s3_virge_bitblt(virge_t *virge, int count, uint32_t cpu_dat) {
                         virge->s3d.w = virge->s3d.r_width;
                         virge->s3d.h = virge->s3d.r_height;
                         virge->s3d.rop = (virge->s3d.cmd_set >> 17) & 0xff;
+#ifdef PCEM_PERF_STATS
+                        VIRGE_PERF_INC(virge, rectfill_ops);
+                        VIRGE_PERF_ROP(virge, virge->s3d.rop);
+#endif
 
                         /*                        pclog("RctFll start %i,%i %i,%i %02X %08x\n", virge->s3d.dest_x,
                                                                                          virge->s3d.dest_y,
                                                                                          virge->s3d.w,
                                                                                          virge->s3d.h,
                                                                                          virge->s3d.rop, virge->s3d.dest_base);*/
+                        if (s3_virge_rectfill_avx2(virge, svga, vram, bpp, x_mul, x_inc, y_inc))
+                                return;
                 }
 
                 while (count && virge->s3d.h) {
@@ -2475,6 +2778,7 @@ static void s3_virge_bitblt(virge_t *virge, int count, uint32_t cpu_dat) {
 
                                 WRITE(dest_addr, out);
                         }
+                        rectfill_pixels++;
 
                         virge->s3d.src_x += x_inc;
                         virge->s3d.src_x &= 0x7ff;
@@ -2489,13 +2793,16 @@ static void s3_virge_bitblt(virge_t *virge, int count, uint32_t cpu_dat) {
                                 virge->s3d.dest_y += y_inc;
                                 virge->s3d.h--;
                                 if (!virge->s3d.h) {
+                                        VIRGE_PERF_ADD(virge, rectfill_pixels, rectfill_pixels);
                                         return;
                                 }
                         } else
                                 virge->s3d.w--;
                         count--;
                 }
+                VIRGE_PERF_ADD(virge, rectfill_pixels, rectfill_pixels);
                 break;
+        }
 
         case CMD_SET_COMMAND_LINE:
                 if (count == -1) {
@@ -2503,6 +2810,10 @@ static void s3_virge_bitblt(virge_t *virge, int count, uint32_t cpu_dat) {
                         virge->s3d.dest_y = virge->s3d.lystart;
                         virge->s3d.h = virge->s3d.lycnt;
                         virge->s3d.rop = (virge->s3d.cmd_set >> 17) & 0xff;
+#ifdef PCEM_PERF_STATS
+                        VIRGE_PERF_INC(virge, line_ops);
+                        VIRGE_PERF_ROP(virge, virge->s3d.rop);
+#endif
                 }
                 while (virge->s3d.h) {
                         int x;
@@ -2565,6 +2876,10 @@ static void s3_virge_bitblt(virge_t *virge, int count, uint32_t cpu_dat) {
                 break;
 
         case CMD_SET_COMMAND_POLY:
+#ifdef PCEM_PERF_STATS
+                if (count == -1)
+                        VIRGE_PERF_INC(virge, poly_ops);
+#endif
                 /*No source*/
                 if (virge->s3d.pycnt & (1 << 28))
                         virge->s3d.dest_r = virge->s3d.prxstart;
@@ -2655,6 +2970,7 @@ typedef struct s3d_state_t {
 
         int32_t x1, x2;
         int y;
+        virge_t *virge;
 
         rgba_t dest_rgba;
 } s3d_state_t;
@@ -3182,6 +3498,7 @@ static void dest_pixel_gouraud_shaded_triangle(s3d_state_t *state) {
 }
 
 static void dest_pixel_unlit_texture_triangle(s3d_state_t *state) {
+        VIRGE_PERF_INC(state->virge, texture_samples);
         tex_sample(state);
 
         if (state->cmd_set & CMD_SET_ABC_SRC)
@@ -3189,6 +3506,7 @@ static void dest_pixel_unlit_texture_triangle(s3d_state_t *state) {
 }
 
 static void dest_pixel_lit_texture_decal(s3d_state_t *state) {
+        VIRGE_PERF_INC(state->virge, texture_samples);
         tex_sample(state);
 
         if (state->cmd_set & CMD_SET_ABC_SRC)
@@ -3196,6 +3514,7 @@ static void dest_pixel_lit_texture_decal(s3d_state_t *state) {
 }
 
 static void dest_pixel_lit_texture_reflection(s3d_state_t *state) {
+        VIRGE_PERF_INC(state->virge, texture_samples);
         tex_sample(state);
 
         state->dest_rgba.r += (state->r >> 7);
@@ -3210,6 +3529,7 @@ static void dest_pixel_lit_texture_reflection(s3d_state_t *state) {
 static void dest_pixel_lit_texture_modulate(s3d_state_t *state) {
         int r = state->r >> 7, g = state->g >> 7, b = state->b >> 7, a = state->a >> 7;
 
+        VIRGE_PERF_INC(state->virge, texture_samples);
         tex_sample(state);
 
         CLAMP_RGBA(r, g, b, a);
@@ -3380,10 +3700,12 @@ static void tri(virge_t *virge, s3d_t *s3d_tri, s3d_state_t *state, int yc, int3
                                                         /*Not implemented yet*/
                                                         break;
                                                 case 1: /*16 bpp*/
+                                                        VIRGE_PERF_INC(virge, vram_reads);
                                                         src_col = *(uint16_t *)&vram[dest_addr & svga->vram_mask];
                                                         RGB15_TO_24(src_col, src_r, src_g, src_b);
                                                         break;
                                                 case 2: /*24 bpp*/
+                                                        VIRGE_PERF_INC(virge, vram_reads);
                                                         src_col = (*(uint32_t *)&vram[dest_addr & svga->vram_mask]) & 0xffffff;
                                                         RGB24_TO_24(src_col, src_r, src_g, src_b);
                                                         break;
@@ -3407,12 +3729,14 @@ static void tri(virge_t *virge, s3d_t *s3d_tri, s3d_state_t *state, int yc, int3
                                         case 1: /*16 bpp*/
                                                 RGB15(state->dest_rgba.r, state->dest_rgba.g, state->dest_rgba.b, dest_col);
                                                 *(uint16_t *)&vram[dest_addr] = dest_col;
+                                                VIRGE_PERF_INC(virge, vram_writes);
                                                 break;
                                         case 2: /*24 bpp*/
                                                 dest_col = RGB24(state->dest_rgba.r, state->dest_rgba.g, state->dest_rgba.b);
                                                 *(uint8_t *)&vram[dest_addr] = dest_col & 0xff;
                                                 *(uint8_t *)&vram[dest_addr + 1] = (dest_col >> 8) & 0xff;
                                                 *(uint8_t *)&vram[dest_addr + 2] = (dest_col >> 16) & 0xff;
+                                                VIRGE_PERF_INC(virge, vram_writes);
                                                 break;
                                         }
 
@@ -3432,6 +3756,7 @@ static void tri(virge_t *virge, s3d_t *s3d_tri, s3d_state_t *state, int yc, int3
                                 dest_addr += x_offset;
                                 z_addr += xz_offset;
                                 virge->pixel_count++;
+                                VIRGE_PERF_INC(virge, rasterized_pixels);
                         }
                 }
         tri_skip_line:
@@ -3463,8 +3788,11 @@ static void s3_virge_triangle(virge_t *virge, s3d_t *s3d_tri) {
         uint64_t start_time = timer_read();
         uint64_t end_time;
 
+        VIRGE_PERF_INC(virge, triangles);
+
         state.tbu = s3d_tri->tbu << 11;
         state.tbv = s3d_tri->tbv << 11;
+        state.virge = virge;
 
         state.max_d = (s3d_tri->cmd_set >> 8) & 15;
 
@@ -3612,6 +3940,7 @@ static void s3_virge_triangle(virge_t *virge, s3d_t *s3d_tri) {
         end_time = timer_read();
 
         virge_time += end_time - start_time;
+        VIRGE_PERF_ADD(virge, cpu_time, end_time - start_time);
 }
 
 static void render_thread(void *param) {
@@ -4271,20 +4600,41 @@ static void *s3_virge_375_init() {
 
 static void s3_virge_close(void *p) {
         virge_t *virge = (virge_t *)p;
+#ifdef PCEM_PERF_STATS
+        int perf_snapshot_taken = 0;
+        virge_perf_dump_t perf_snapshot;
+#endif
 #ifndef RELEASE_BUILD
         FILE *f = fopen("vram.dmp", "wb");
         fwrite(virge->svga.vram, 4 << 20, 1, f);
         fclose(f);
 #endif
 
-        thread_kill(virge->render_thread);
+        thread_set_event(virge->wake_render_thread);
+        thread_set_event(virge->wake_fifo_thread);
+        if (!s3_virge_wait_fifo_idle_bounded(virge, 2000) || !s3_virge_wait_renderer_idle_bounded(virge, 2000))
+                pclog("s3_virge_close: timed out waiting for idle, forcing shutdown\n");
+#ifdef PCEM_PERF_STATS
+        else {
+                s3_virge_perf_snapshot(virge, &perf_snapshot);
+                perf_snapshot_taken = 1;
+        }
+#endif
+
+        thread_kill_join(virge->render_thread);
+        thread_kill_join(virge->fifo_thread);
         thread_destroy_event(virge->not_full_event);
         thread_destroy_event(virge->wake_main_thread);
         thread_destroy_event(virge->wake_render_thread);
 
-        thread_kill(virge->fifo_thread);
         thread_destroy_event(virge->wake_fifo_thread);
         thread_destroy_event(virge->fifo_not_full_event);
+
+#ifdef PCEM_PERF_STATS
+        if (!perf_snapshot_taken)
+                s3_virge_perf_snapshot(virge, &perf_snapshot);
+        s3_virge_perf_dump(&perf_snapshot);
+#endif
 
         svga_close(&virge->svga);
 

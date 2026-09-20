@@ -3,6 +3,7 @@
 typedef void thread_t;
 thread_t *thread_create(void (*thread_rout)(void *param), void *param);
 void thread_kill(thread_t *handle);
+void thread_kill_join(thread_t *handle);
 
 typedef void event_t;
 event_t *thread_create_event();

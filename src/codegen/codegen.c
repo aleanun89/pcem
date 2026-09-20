@@ -624,6 +624,9 @@ generate_call:
         codegen_mark_code_present(block, cs + old_pc, (op_pc - old_pc) - pc_off);
         //        pclog("%04x:%08x : %02x\n", CS, new_pc, opcode);
         if (recomp_op_table && recomp_op_table[(opcode | op_32) & recomp_opcode_mask]) {
+#ifdef PCEM_PERF_STATS
+                cpu_dynarec_perf_record_native_instruction();
+#endif
                 uint32_t new_pc =
                         recomp_op_table[(opcode | op_32) & recomp_opcode_mask](block, ir, opcode, fetchdat, op_32, op_pc);
                 if (new_pc) {
@@ -691,6 +694,9 @@ generate_call:
         if (op_ssegs != last_op_ssegs)
                 uop_MOV_IMM(ir, IREG_ssegs, op_ssegs);
         uop_LOAD_FUNC_ARG_IMM(ir, 0, fetchdat);
+#ifdef PCEM_PERF_STATS
+        cpu_dynarec_perf_record_handler_call();
+#endif
         uop_CALL_INSTRUCTION_FUNC(ir, op);
         codegen_mark_code_present(block, cs + cpu_state.pc, 8);
 
