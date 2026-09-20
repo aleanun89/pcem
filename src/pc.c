@@ -574,8 +574,8 @@ void speedchanged() {
 }
 
 void closepc() {
-        cpu_dynarec_perf_dump();
         codegen_close();
+        cpu_dynarec_perf_dump();
         atapi->exit();
         //        ioctl_close();
         dumppic();

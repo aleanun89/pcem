@@ -64,7 +64,8 @@ When `PCEM_PERF_STATS=ON`, shutdown logging now dumps:
   - VRAM reads/writes observed on these paths;
   - scalar operation count;
   - accumulated CPU-time ticks;
-  - per-ROP usage histogram.
+  - per-ROP usage histogram;
+  - `avx2_ops`, reserved for later phases and expected to remain zero in Phase 1.
 
 ## Baseline benchmark procedure
 
@@ -90,6 +91,6 @@ Manual baseline procedure (not executed here):
 
 ## Current limitations
 
-- This phase does **not** add a block-cache optimization, AVX2 path, or semantic changes, because the current repository and available tests do not let us prove equivalence safely in this environment.
+- This phase does **not** add a block-cache optimization, an active AVX2 execution path, or semantic changes, because the current repository and available tests do not let us prove equivalence safely in this environment.
 - The proportion of C handlers is only measurable when `PCEM_PERF_STATS=ON` and real workloads actually trigger block recompilation.
 - No performance improvement is claimed in this document.
