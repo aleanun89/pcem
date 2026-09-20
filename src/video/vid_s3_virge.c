@@ -4384,16 +4384,17 @@ static void s3_virge_close(void *p) {
 #endif
 
         thread_kill(virge->render_thread);
+        thread_kill(virge->fifo_thread);
+        s3_virge_perf_dump(virge);
+
         thread_destroy_event(virge->not_full_event);
         thread_destroy_event(virge->wake_main_thread);
         thread_destroy_event(virge->wake_render_thread);
 
-        thread_kill(virge->fifo_thread);
         thread_destroy_event(virge->wake_fifo_thread);
         thread_destroy_event(virge->fifo_not_full_event);
 
         svga_close(&virge->svga);
-        s3_virge_perf_dump(virge);
 
         free(virge);
 }
