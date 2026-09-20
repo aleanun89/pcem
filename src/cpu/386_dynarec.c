@@ -47,54 +47,64 @@ typedef struct cpu_dynarec_perf_stats_t {
 
 #ifdef PCEM_PERF_STATS
 static cpu_dynarec_perf_stats_t cpu_dynarec_perf_stats;
+#define CPU_DYNAREC_PERF_INC(field) __atomic_add_fetch(&cpu_dynarec_perf_stats.field, 1, __ATOMIC_RELAXED)
+#else
+#define CPU_DYNAREC_PERF_INC(field) ((void)0)
 #endif
 
 void cpu_dynarec_perf_record_native_instruction() {
 #ifdef PCEM_PERF_STATS
-        cpu_dynarec_perf_stats.native_instructions++;
+        CPU_DYNAREC_PERF_INC(native_instructions);
 #endif
 }
 void cpu_dynarec_perf_record_handler_call() {
 #ifdef PCEM_PERF_STATS
-        cpu_dynarec_perf_stats.handler_calls++;
+        CPU_DYNAREC_PERF_INC(handler_calls);
 #endif
 }
 void cpu_dynarec_perf_record_block_invalidated() {
 #ifdef PCEM_PERF_STATS
-        cpu_dynarec_perf_stats.block_invalidations++;
+        CPU_DYNAREC_PERF_INC(block_invalidations);
 #endif
 }
 void cpu_dynarec_perf_record_block_compiled() {
 #ifdef PCEM_PERF_STATS
-        cpu_dynarec_perf_stats.compiled_blocks++;
+        CPU_DYNAREC_PERF_INC(compiled_blocks);
 #endif
 }
 
 void cpu_dynarec_perf_dump() {
 #ifdef PCEM_PERF_STATS
-        uint64_t translated_instructions = cpu_dynarec_perf_stats.native_instructions + cpu_dynarec_perf_stats.handler_calls;
+        uint64_t interpreted_blocks = __atomic_load_n(&cpu_dynarec_perf_stats.interpreted_blocks, __ATOMIC_RELAXED);
+        uint64_t recompiler_entries = __atomic_load_n(&cpu_dynarec_perf_stats.recompiler_entries, __ATOMIC_RELAXED);
+        uint64_t fast_validations_ok = __atomic_load_n(&cpu_dynarec_perf_stats.fast_validations_ok, __ATOMIC_RELAXED);
+        uint64_t cache_misses = __atomic_load_n(&cpu_dynarec_perf_stats.cache_misses, __ATOMIC_RELAXED);
+        uint64_t slow_validations = __atomic_load_n(&cpu_dynarec_perf_stats.slow_validations, __ATOMIC_RELAXED);
+        uint64_t slow_validation_hits = __atomic_load_n(&cpu_dynarec_perf_stats.slow_validation_hits, __ATOMIC_RELAXED);
+        uint64_t dirty_page_checks = __atomic_load_n(&cpu_dynarec_perf_stats.dirty_page_checks, __ATOMIC_RELAXED);
+        uint64_t fpu_top_recompiles = __atomic_load_n(&cpu_dynarec_perf_stats.fpu_top_recompiles, __ATOMIC_RELAXED);
+        uint64_t compiled_blocks = __atomic_load_n(&cpu_dynarec_perf_stats.compiled_blocks, __ATOMIC_RELAXED);
+        uint64_t executed_recompiled_blocks = __atomic_load_n(&cpu_dynarec_perf_stats.executed_recompiled_blocks, __ATOMIC_RELAXED);
+        uint64_t marked_blocks = __atomic_load_n(&cpu_dynarec_perf_stats.marked_blocks, __ATOMIC_RELAXED);
+        uint64_t block_invalidations = __atomic_load_n(&cpu_dynarec_perf_stats.block_invalidations, __ATOMIC_RELAXED);
+        uint64_t native_instructions = __atomic_load_n(&cpu_dynarec_perf_stats.native_instructions, __ATOMIC_RELAXED);
+        uint64_t handler_calls = __atomic_load_n(&cpu_dynarec_perf_stats.handler_calls, __ATOMIC_RELAXED);
+        uint64_t exceptions = __atomic_load_n(&cpu_dynarec_perf_stats.exceptions, __ATOMIC_RELAXED);
+        uint64_t translated_instructions = native_instructions + handler_calls;
 
         pclog("dynarec386 stats:\n");
         pclog("  interpreted_blocks=%llu recompiler_entries=%llu executed_recompiled_blocks=%llu compiled_blocks=%llu marked_blocks=%llu\n",
-              (unsigned long long)cpu_dynarec_perf_stats.interpreted_blocks,
-              (unsigned long long)cpu_dynarec_perf_stats.recompiler_entries,
-              (unsigned long long)cpu_dynarec_perf_stats.executed_recompiled_blocks,
-              (unsigned long long)cpu_dynarec_perf_stats.compiled_blocks,
-              (unsigned long long)cpu_dynarec_perf_stats.marked_blocks);
+              (unsigned long long)interpreted_blocks, (unsigned long long)recompiler_entries,
+              (unsigned long long)executed_recompiled_blocks, (unsigned long long)compiled_blocks,
+              (unsigned long long)marked_blocks);
         pclog("  fast_validations_ok=%llu cache_misses=%llu slow_validations=%llu slow_validation_hits=%llu dirty_page_checks=%llu fpu_top_recompiles=%llu block_invalidations=%llu exceptions=%llu\n",
-              (unsigned long long)cpu_dynarec_perf_stats.fast_validations_ok,
-              (unsigned long long)cpu_dynarec_perf_stats.cache_misses,
-              (unsigned long long)cpu_dynarec_perf_stats.slow_validations,
-              (unsigned long long)cpu_dynarec_perf_stats.slow_validation_hits,
-              (unsigned long long)cpu_dynarec_perf_stats.dirty_page_checks,
-              (unsigned long long)cpu_dynarec_perf_stats.fpu_top_recompiles,
-              (unsigned long long)cpu_dynarec_perf_stats.block_invalidations,
-              (unsigned long long)cpu_dynarec_perf_stats.exceptions);
+              (unsigned long long)fast_validations_ok, (unsigned long long)cache_misses,
+              (unsigned long long)slow_validations, (unsigned long long)slow_validation_hits,
+              (unsigned long long)dirty_page_checks, (unsigned long long)fpu_top_recompiles,
+              (unsigned long long)block_invalidations, (unsigned long long)exceptions);
         pclog("  native_translated_instructions=%llu handler_calls=%llu handler_share=%0.2f%%\n",
-              (unsigned long long)cpu_dynarec_perf_stats.native_instructions,
-              (unsigned long long)cpu_dynarec_perf_stats.handler_calls,
-              translated_instructions ? ((double)cpu_dynarec_perf_stats.handler_calls * 100.0) / (double)translated_instructions
-                                      : 0.0);
+              (unsigned long long)native_instructions, (unsigned long long)handler_calls,
+              translated_instructions ? ((double)handler_calls * 100.0) / (double)translated_instructions : 0.0);
 #endif
 }
 
@@ -306,7 +316,7 @@ static inline void exec_interpreter(void) {
         cpu_block_end = 0;
         x86_was_reset = 0;
 #ifdef PCEM_PERF_STATS
-        cpu_dynarec_perf_stats.interpreted_blocks++;
+        CPU_DYNAREC_PERF_INC(interpreted_blocks);
 #endif
         //        if (output) pclog("Interpret block at %04x:%04x  %04x %04x %04x %04x  %04x %04x  %04x\n", CS, pc, AX, BX, CX,
         //        DX, SI, DI, SP);
@@ -378,7 +388,7 @@ static void __attribute__((noinline)) exec_recompiler(void) {
         int valid_block = 0;
 
 #ifdef PCEM_PERF_STATS
-        cpu_dynarec_perf_stats.recompiler_entries++;
+        CPU_DYNAREC_PERF_INC(recompiler_entries);
 #endif
 
         if (!cpu_state.abrt) {
@@ -392,9 +402,9 @@ static void __attribute__((noinline)) exec_recompiler(void) {
                               ((block->status & cpu_cur_status & CPU_STATUS_MASK) == (cpu_cur_status & CPU_STATUS_MASK));
 #ifdef PCEM_PERF_STATS
                 if (valid_block)
-                        cpu_dynarec_perf_stats.fast_validations_ok++;
+                        CPU_DYNAREC_PERF_INC(fast_validations_ok);
                 else
-                        cpu_dynarec_perf_stats.cache_misses++;
+                        CPU_DYNAREC_PERF_INC(cache_misses);
 #endif
                 if (!valid_block) {
                         uint64_t mask = (uint64_t)1 << ((phys_addr >> PAGE_MASK_SHIFT) & PAGE_MASK_MASK);
@@ -404,7 +414,7 @@ static void __attribute__((noinline)) exec_recompiler(void) {
                         if ((page->code_present_mask & mask) || (page->byte_code_present_mask[byte_offset] & byte_mask)) {
                                 /*Walk page tree to see if we find the correct block*/
 #ifdef PCEM_PERF_STATS
-                                cpu_dynarec_perf_stats.slow_validations++;
+                                CPU_DYNAREC_PERF_INC(slow_validations);
 #endif
                                 codeblock_t *new_block = codeblock_tree_find(phys_addr, cs);
                                 if (new_block) {
@@ -415,7 +425,7 @@ static void __attribute__((noinline)) exec_recompiler(void) {
                                                        (cpu_cur_status & CPU_STATUS_MASK));
                                         if (valid_block) {
 #ifdef PCEM_PERF_STATS
-                                                cpu_dynarec_perf_stats.slow_validation_hits++;
+                                                CPU_DYNAREC_PERF_INC(slow_validation_hits);
 #endif
                                                 block = new_block;
                                                 codeblock_hash[hash] = get_block_nr(block);
@@ -426,7 +436,7 @@ static void __attribute__((noinline)) exec_recompiler(void) {
 
                 if (valid_block && (block->page_mask & *block->dirty_mask)) {
 #ifdef PCEM_PERF_STATS
-                        cpu_dynarec_perf_stats.dirty_page_checks++;
+                        CPU_DYNAREC_PERF_INC(dirty_page_checks);
 #endif
                         codegen_check_flush(page, page->dirty_mask, phys_addr);
                         if (block->pc == BLOCK_PC_INVALID)
@@ -448,7 +458,7 @@ static void __attribute__((noinline)) exec_recompiler(void) {
                                 valid_block = 0;
                         else if (block->page_mask2 & *block->dirty_mask2) {
 #ifdef PCEM_PERF_STATS
-                                cpu_dynarec_perf_stats.dirty_page_checks++;
+                                CPU_DYNAREC_PERF_INC(dirty_page_checks);
 #endif
                                 codegen_check_flush(page_2, page_2->dirty_mask, phys_addr_2);
                                 if (block->pc == BLOCK_PC_INVALID)
@@ -469,7 +479,7 @@ static void __attribute__((noinline)) exec_recompiler(void) {
                         /*FPU top-of-stack does not match the value this block was compiled
                           with, re-compile using dynamic top-of-stack*/
 #ifdef PCEM_PERF_STATS
-                        cpu_dynarec_perf_stats.fpu_top_recompiles++;
+                        CPU_DYNAREC_PERF_INC(fpu_top_recompiles);
 #endif
                         block->flags &= ~(CODEBLOCK_STATIC_TOP | CODEBLOCK_WAS_RECOMPILED);
                 }
@@ -489,7 +499,7 @@ static void __attribute__((noinline)) exec_recompiler(void) {
 
                 cpu_recomp_blocks++;
 #ifdef PCEM_PERF_STATS
-                cpu_dynarec_perf_stats.executed_recompiled_blocks++;
+                CPU_DYNAREC_PERF_INC(executed_recompiled_blocks);
 #endif
         } else if (valid_block && !cpu_state.abrt) {
                 uint32_t start_pc = cs + cpu_state.pc;
@@ -593,7 +603,7 @@ static void __attribute__((noinline)) exec_recompiler(void) {
                 x86_was_reset = 0;
 
 #ifdef PCEM_PERF_STATS
-                cpu_dynarec_perf_stats.marked_blocks++;
+                CPU_DYNAREC_PERF_INC(marked_blocks);
 #endif
 
                 codegen_block_init(phys_addr);
@@ -700,7 +710,7 @@ void exec386_dynarec(int cycs) {
                         if (cpu_state.abrt) {
                                 flags_rebuild();
 #ifdef PCEM_PERF_STATS
-                                cpu_dynarec_perf_stats.exceptions++;
+                                CPU_DYNAREC_PERF_INC(exceptions);
 #endif
                                 tempi = cpu_state.abrt & ABRT_MASK;
                                 cpu_state.abrt = 0;
